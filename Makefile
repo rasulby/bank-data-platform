@@ -1,34 +1,25 @@
-
 -include .env
 export
 
-.DEFAULT_GOAL := help
+.DEFAULT_GOAL := up
+.PHONY: up down clean ps psql seed stream connector connector-status topics peek
 
-.PHONY: help up down clean ps psql seed stream connector connector-status topics peek
-
-help: ## Show available commands
-	@echo ""
-	@echo "Available commands:"
-	@echo "-------------------"
-	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-	@echo ""
-
-up: ## Start all Docker containers
+up:
 	docker compose up -d
 
-down: ## Stop and remove containers
+down:
 	docker compose down
 
-clean: ## Stop containers and remove volumes (deletes stored data)
+clean:
 	docker compose down -v
 
-ps: ## Show container status
+ps:
 	docker compose ps
 
-psql: ## Connect to PostgreSQL CLI
+psql:
 	docker compose exec source-db psql -U $(SOURCE_DB_USER) -d $(SOURCE_DB_NAME)
 
-seed: ## Generate and insert sample data
+seed:
 	.venv/bin/python ingestion/generator/seed.py
 
 stream:
@@ -38,10 +29,10 @@ connector:
 	bash infra/debezium/register.sh
 
 connector-status:
-	curl -s http://localhost:8083/connectors/bank-source-connector/status | python3 -m json.tool
+	curl -s http://localhost:$(CONNECT_HOST_PORT)/connectors/$(DEBEZIUM_CONNECTOR_NAME)/status | python3 -m json.tool
 
 topics:
 	docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
 
 peek:
-	docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic bank.public.transactions --from-beginning --max-messages 3 --property print.key=true
+	docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic $(DEBEZIUM_TOPIC_PREFIX).public.transactions --from-beginning --max-messages 3 --property print.key=true
