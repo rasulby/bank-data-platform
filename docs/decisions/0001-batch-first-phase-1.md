@@ -1,6 +1,6 @@
 # ADR-0001: Batch-first Phase 1; CDC and streaming deferred to Phase 2
 
-- Status: Accepted
+- Status: Superseded by [ADR-0002](0002-minimal-phase-1.md)
 - Date: 2026-10-14
 
 ## Context

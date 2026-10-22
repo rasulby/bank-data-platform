@@ -1,0 +1,15 @@
+name: checks
+on: [pull_request, push]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install ruff==0.11.13
+      - run: ruff check pipeline orchestration tests
+      - run: ruff format --check pipeline orchestration tests
+      - run: python -m compileall -q pipeline orchestration tests ingestion
+      - run: cp .env.example .env && docker compose config --quiet

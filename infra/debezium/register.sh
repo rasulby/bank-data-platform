@@ -6,12 +6,12 @@ set -a
 source .env
 set +a
 
-echo "Connect-in hazır olmasını gözləyirəm..."
+echo "Waiting for Kafka Connect..."
 until curl -sf http://localhost:8083/ > /dev/null; do
   sleep 3
 done
 
-# şablondakı ${...} yer tutucularını mühit dəyişənləri ilə əvəz edirik
+# Replace template placeholders with environment variables
 python3 -c 'import os, sys; sys.stdout.write(os.path.expandvars(open("infra/debezium/connector.template.json").read()))' \
   | curl -sS --fail-with-body -X PUT \
       -H "Content-Type: application/json" \

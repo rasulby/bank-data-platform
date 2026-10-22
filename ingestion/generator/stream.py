@@ -31,7 +31,7 @@ def load_state(cur):
 
 def insert_txn(cur, card, merchant_id, txn_type, amount, country):
     card_id, account_id, currency = card
-    # atomik: balans kifayətdirsə azalt, yoxsa heç nə etmə
+    # Subtract the amount only when the balance is sufficient
     cur.execute(
         """UPDATE accounts
            SET balance = balance - %s, updated_at = %s
@@ -70,7 +70,7 @@ def normal_txn(cur, cards, merchants):
 
 
 def fraud_velocity(cur, cards, merchants):
-    """Eyni kartla bir neçə saniyədə 3 fərqli ölkədə əməliyyat."""
+    """Generate transactions in three countries for the same card."""
     card = random.choice(cards)
     for country in random.sample(FRAUD_COUNTRIES, 3):
         amount = round(random.uniform(300, 900), 2)
@@ -78,27 +78,27 @@ def fraud_velocity(cur, cards, merchants):
 
 
 def fraud_large_amount(cur, cards, merchants):
-    """Kartın adi məbləğindən dəfələrlə böyük əməliyyat."""
+    """Generate an unusually large transaction."""
     card = random.choice(cards)
     amount = round(random.uniform(2000, 6000), 2)
     insert_txn(cur, card, random.choice(merchants), "PURCHASE", amount, "AZ")
 
 
 def maintenance(cur, cards, customers):
-    """Bank daxili dəyişikliklər: bunlar CDC-də UPDATE hadisələri yaradır."""
+    """Update bank records to produce CDC update events."""
     r = random.random()
-    if r < 0.05:  # müştərinin seqmenti dəyişir
+    if r < 0.05:  # Change the customer segment
         cur.execute(
             "UPDATE customers SET segment = %s, updated_at = %s WHERE customer_id = %s",
             (random.choice(SEGMENTS), now_utc(), random.choice(customers)),
         )
-    elif r < 0.06 and len(cards) > 10:  # kart bloklanır
+    elif r < 0.06 and len(cards) > 10:  # Block a card
         card = cards.pop(random.randrange(len(cards)))
         cur.execute(
             "UPDATE cards SET status = 'BLOCKED', updated_at = %s WHERE card_id = %s",
             (now_utc(), card[0]),
         )
-    elif r < 0.26:  # hesaba mədaxil
+    elif r < 0.26:  # Deposit into an account
         card = random.choice(cards)
         cur.execute(
             "UPDATE accounts SET balance = balance + %s, updated_at = %s WHERE account_id = %s",
@@ -108,15 +108,15 @@ def maintenance(cur, cards, customers):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--rate", type=int, default=5, help="saniyədə əməliyyat sayı")
-    parser.add_argument("--duration", type=int, default=0, help="saniyə (0 = sonsuz)")
+    parser.add_argument("--rate", type=int, default=5, help="Transactions per second")
+    parser.add_argument("--duration", type=int, default=0, help="Duration in seconds (0 = unlimited)")
     args = parser.parse_args()
 
     conn = get_conn()
     with conn.cursor() as cur:
         cards, merchants, customers = load_state(cur)
     conn.commit()
-    print(f"Başladı: {len(cards)} aktiv kart, rate={args.rate}/san. Dayandırmaq: Ctrl+C")
+    print(f"Started: {len(cards)} active cards, rate={args.rate}/sec. Stop: Ctrl+C")
 
     started = time.time()
     total = 0
@@ -134,10 +134,10 @@ def main():
                     fraud_large_amount(cur, cards, merchants)
                     print("[fraud] large amount")
                 maintenance(cur, cards, customers)
-            conn.commit()  # bütün "saniyə" bir tranzaksiya kimi yazılır
+            conn.commit()  # Commit each batch as one transaction
             time.sleep(max(0, 1 - (time.time() - tick_start)))
     except KeyboardInterrupt:
-        print(f"\nDayandırıldı. Normal əməliyyat sayı: {total}")
+        print(f"\nStopped. Normal transactions: {total}")
     finally:
         conn.close()
 

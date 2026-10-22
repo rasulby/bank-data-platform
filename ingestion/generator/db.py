@@ -7,9 +7,11 @@ load_dotenv()
 
 
 def get_conn():
+    # No defaults on purpose: a missing variable should fail loudly
+    # instead of silently connecting to the wrong place.
     return psycopg2.connect(
-        host=os.getenv("SOURCE_DB_HOST", "localhost"),
-        port=os.getenv("SOURCE_DB_HOST_PORT", "5434"),
+        host=os.environ["SOURCE_DB_HOST"],
+        port=os.environ["SOURCE_DB_HOST_PORT"],
         user=os.environ["SOURCE_DB_USER"],
         password=os.environ["SOURCE_DB_PASSWORD"],
         dbname=os.environ["SOURCE_DB_NAME"],
