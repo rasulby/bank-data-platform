@@ -9,20 +9,20 @@ from db import get_conn
 N_CUSTOMERS = int(os.getenv("SEED_CUSTOMERS", "1000"))
 N_MERCHANTS = 200
 
-random.seed(42)          # hər işə salanda eyni nəticə (təkrarlana bilən data)
+random.seed(42)          # Use a fixed seed for repeatable sample data
 Faker.seed(42)
 fake = Faker("az_AZ")
 
-CITIES = ["Bakı", "Sumqayıt", "Gəncə", "Mingəçevir", "Lənkəran", "Şəki", "Naxçıvan", "Quba"]
+CITIES = ["Baku", "Sumgait", "Ganja", "Mingachevir", "Lankaran", "Shaki", "Nakhchivan", "Quba"]
 CITY_WEIGHTS = [60, 12, 8, 4, 4, 4, 4, 4]
 SEGMENTS = ["MASS", "AFFLUENT", "PREMIUM"]
 SEGMENT_WEIGHTS = [80, 15, 5]
 CURRENCIES = ["AZN", "USD", "EUR"]
 CURRENCY_WEIGHTS = [85, 10, 5]
 MERCHANT_TYPES = [
-    ("Supermarket", "5411"), ("Restoran", "5812"), ("Yanacaq", "5541"),
-    ("Aptek", "5912"), ("Elektronika", "5732"), ("Mağaza", "5311"),
-    ("Taksi", "4121"), ("Otel", "7011"),
+    ("Supermarket", "5411"), ("Restaurant", "5812"), ("Fuel station", "5541"),
+    ("Pharmacy", "5912"), ("Electronics", "5732"), ("Shop", "5311"),
+    ("Taxi", "4121"), ("Hotel", "7011"),
 ]
 PHONE_PREFIXES = ["50", "51", "55", "70", "77", "99", "10"]
 
@@ -34,13 +34,13 @@ def make_phone():
 
 
 def make_iban():
-    # AZ + 2 rəqəm + 4 hərf (SYNT = sintetik) + 20 rəqəm = 28 simvol
+    # AZ + 2 digits + SYNT + 20 digits = 28 characters
     digits = "".join(random.choices("0123456789", k=20))
     return f"AZ{random.randint(10, 99)}SYNT{digits}"
 
 
 def make_card_number():
-    # "9" ilə başlayır ki, real kart nömrəsi olmasın
+    # Start with 9 to mark synthetic card numbers
     return "9" + "".join(random.choices("0123456789", k=15))
 
 
@@ -50,10 +50,10 @@ def main():
         with conn, conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM customers")
             if cur.fetchone()[0] > 0:
-                print("Data artıq var, seed edilmir.")
+                print("Data already exists; skipping seed.")
                 return
 
-            # 1) müştərilər
+            # 1) Customers
             rows = []
             for _ in range(N_CUSTOMERS):
                 created = fake.date_time_between(start_date="-5y", end_date="-30d")
@@ -74,7 +74,7 @@ def main():
                 fetch=True,
             )
 
-            # 2) hesablar (hər müştəriyə 1-2)
+            # 2) Accounts (1-2 per customer)
             rows = []
             for customer_id, created_at in customers:
                 for _ in range(random.choices([1, 2], [75, 25])[0]):
@@ -96,7 +96,7 @@ def main():
                 fetch=True,
             )
 
-            # 3) kartlar (hər hesaba 1)
+            # 3) Cards (one per account)
             rows = []
             for account_id, opened_at in accounts:
                 rows.append((
@@ -115,7 +115,7 @@ def main():
                 rows,
             )
 
-            # 4) merchantlar
+            # 4) Merchants
             rows = []
             for i in range(1, N_MERCHANTS + 1):
                 label, mcc = random.choice(MERCHANT_TYPES)
@@ -127,8 +127,8 @@ def main():
                 rows,
             )
 
-            print(f"OK: {len(customers)} müştəri, {len(accounts)} hesab, "
-                  f"{len(accounts)} kart, {N_MERCHANTS} merchant")
+            print(f"OK: {len(customers)} customers, {len(accounts)} accounts, "
+                  f"{len(accounts)} cards, {N_MERCHANTS} merchant")
     finally:
         conn.close()
 
