@@ -1,6 +1,6 @@
 # ADR-0002: Use a smaller stack for Phase 1
 
-- Status: Accepted
+- Status: Superseded by [ADR-0003](0003-cdc-lakehouse.md)
 - Date: 2026-10-22
 - Replaces the Phase 1 stack in ADR-0001
 

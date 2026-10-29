@@ -1,58 +1,275 @@
+name: bank-data-platform
+
+x-env: &env
+  env_file: ${ENV_FILE:-.env}
+
 services:
   source-db:
     image: postgres:16.4
-    command: [postgres, -c, wal_level=logical]
+    command: [postgres, -c, wal_level=logical, -c, max_replication_slots=5, -c, max_wal_senders=5]
     environment:
-      POSTGRES_USER: ${SOURCE_DB_USER:-bank_user}
-      POSTGRES_PASSWORD: ${SOURCE_DB_PASSWORD:-change_me}
-      POSTGRES_DB: ${SOURCE_DB_NAME:-bank_source}
+      POSTGRES_USER: ${SOURCE_DB_USER}
+      POSTGRES_PASSWORD: ${SOURCE_DB_PASSWORD}
+      POSTGRES_DB: ${SOURCE_DB_NAME}
     ports:
-      - "127.0.0.1:${SOURCE_DB_HOST_PORT:-5434}:5432"
+      - "127.0.0.1:${SOURCE_DB_HOST_PORT}:5432"
     volumes:
-      - source_db_data:/var/lib/postgresql/data
-      - ./infra/postgres/init/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - bank_v2_pg:/var/lib/postgresql/data
+    mem_limit: 512m
     healthcheck:
       test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
+
+  kafka:
+    image: apache/kafka:3.9.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:${KAFKA_HOST_PORT}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+    ports:
+      - "127.0.0.1:${KAFKA_HOST_PORT}:29092"
+    volumes:
+      - bank_v2_broker:/var/lib/kafka/data
+    mem_limit: 1g
+    healthcheck:
+      test: [CMD-SHELL, '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null']
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  kafka-init:
+    image: apache/kafka:3.9.0
+    entrypoint: [/bin/bash, /init-topics.sh]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      CDC_TOPIC_PREFIX: ${CDC_TOPIC_PREFIX}
+      BANK_SCHEMA: ${BANK_SCHEMA}
+    volumes:
+      - ./infra/kafka/init-topics.sh:/init-topics.sh:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+    mem_limit: 384m
+
+  connect:
+    image: quay.io/debezium/connect:3.1
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: bank-v2-connect
+      CONFIG_STORAGE_TOPIC: _bank_v2_configs
+      OFFSET_STORAGE_TOPIC: _bank_v2_offsets
+      STATUS_STORAGE_TOPIC: _bank_v2_status
+      OFFSET_STORAGE_PARTITIONS: 1
+      STATUS_STORAGE_PARTITIONS: 1
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      HEAP_OPTS: -Xms256m -Xmx512m
+    depends_on:
+      source-db:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${CONNECT_HOST_PORT}:8083"
+    mem_limit: 1g
+    healthcheck:
+      test: [CMD-SHELL, 'curl -fsS http://localhost:8083/connectors >/dev/null']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  kafbat:
+    image: ghcr.io/kafbat/kafka-ui:v1.5.0
+    environment:
+      KAFKA_CLUSTERS_0_NAME: bank
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: debezium
+      KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: ${CONNECT_URL}
+      JAVA_OPTS: -Xms64m -Xmx256m
+    ports:
+      - "127.0.0.1:${KAFBAT_HOST_PORT}:8080"
+    mem_limit: 512m
+    depends_on:
+      kafka:
+        condition: service_healthy
+      connect:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, 'wget -qO- http://127.0.0.1:8080/actuator/health >/dev/null']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  minio:
+    build: infra/minio
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT}:9001"
+    volumes:
+      - bank_v2_minio:/data
+    mem_limit: 512m
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:9000/minio/health/live]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8.14.39-alpine
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "127.0.0.1:${CLICKHOUSE_HOST_PORT}:8123"
+      - "127.0.0.1:${CLICKHOUSE_NATIVE_PORT}:9000"
+    volumes:
+      - bank_v2_clickhouse:/var/lib/clickhouse
+    mem_limit: 1500m
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: [CMD-SHELL, 'wget -qO- http://127.0.0.1:8123/ping | grep -q Ok']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  worker:
+    <<: *env
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    volumes:
+      - bank_v2_worker:/state
+    mem_limit: 3g
+    depends_on:
+      connect:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:8090/health]
+      interval: 10s
+      timeout: 5s
+      retries: 30
 
   airflow:
+    <<: *env
     build: .
-    env_file: ${ENV_FILE:-.env}
     environment:
-      SOURCE_DB_HOST: source-db
-      SOURCE_DB_HOST_PORT: 5432
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
       AIRFLOW__CORE__EXECUTOR: SequentialExecutor
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/state/airflow.db
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
-    command:
-      - bash
-      - -ec
-      - |
-        airflow db migrate
-        airflow users create --username "$$AIRFLOW_ADMIN_USER" --password "$$AIRFLOW_ADMIN_PASSWORD" --firstname Local --lastname Student --role Admin --email student@example.com || true
-        exec airflow standalone
+      AIRFLOW__WEBSERVER__WORKERS: '1'
+      AIRFLOW__SCHEDULER__PARSING_PROCESSES: '1'
+    command: [bash, /opt/airflow/scripts/start-airflow.sh]
     ports:
-      - "127.0.0.1:${AIRFLOW_HOST_PORT:-8086}:8080"
-    depends_on:
-      source-db:
-        condition: service_healthy
+      - "127.0.0.1:${AIRFLOW_HOST_PORT}:8080"
     volumes:
-      - airflow_state:/opt/airflow/state
-      - airflow_logs:/opt/airflow/logs
-      - pipeline_data:/opt/airflow/data
+      - bank_v2_airflow:/opt/airflow/state
+      - bank_v2_logs:/opt/airflow/logs
+    mem_limit: 2g
+    restart: unless-stopped
+    depends_on:
+      worker:
+        condition: service_healthy
     healthcheck:
-      test: [CMD-SHELL, 'curl --fail http://localhost:8080/health']
+      test: ["CMD", "python", "-c", "import json,urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=3)); assert all(data[k]['status']=='healthy' for k in ('metadatabase','scheduler'))"]
       interval: 10s
       timeout: 5s
       retries: 40
       start_period: 30s
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: [monitoring]
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - bank_v2_prometheus:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT}:9090"
+    mem_limit: 256m
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    profiles: [monitoring]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - bank_v2_grafana:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_HOST_PORT}:3000"
+    mem_limit: 256m
+
+  superset:
+    <<: *env
+    profiles: [bi]
+    build: infra/superset
+    environment:
+      SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
+    volumes:
+      - bank_v2_superset:/app/superset_home
+      - ./infra/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ./infra/superset/setup.py:/app/pythonpath/setup_bank.py:ro
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        superset db upgrade
+        superset init
+        python /app/pythonpath/setup_bank.py
+        exec gunicorn --bind 0.0.0.0:8088 --workers 1 --timeout 120 "superset.app:create_app()"
+    ports:
+      - "127.0.0.1:${SUPERSET_HOST_PORT}:8088"
+    mem_limit: 1g
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:8088/health]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
 volumes:
-  source_db_data:
-  airflow_state:
-  airflow_logs:
-  pipeline_data:
+  bank_v2_pg:
+  bank_v2_broker:
+  bank_v2_minio:
+  bank_v2_clickhouse:
+  bank_v2_worker:
+  bank_v2_airflow:
+  bank_v2_logs:
+  bank_v2_prometheus:
+  bank_v2_grafana:
+  bank_v2_superset:

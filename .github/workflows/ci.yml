@@ -9,7 +9,9 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install ruff==0.11.13
-      - run: ruff check pipeline orchestration tests
-      - run: ruff format --check pipeline orchestration tests
-      - run: python -m compileall -q pipeline orchestration tests ingestion
-      - run: cp .env.example .env && docker compose config --quiet
+      - run: ruff check jobs worker scripts orchestration tests infra/superset
+      - run: ruff format --check jobs worker scripts orchestration tests infra/superset
+      - run: python -m compileall -q jobs worker scripts orchestration tests infra/superset
+      - run: bash -n scripts/smoke.sh worker/entrypoint.sh infra/kafka/init-topics.sh infra/airflow/start.sh
+      - run: docker compose --env-file .env.example config --quiet
+      - run: python -m unittest discover -s tests/unit -v

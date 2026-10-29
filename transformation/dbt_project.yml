@@ -1,0 +1,13 @@
+name: bank_analytics
+version: '1.0.0'
+config-version: 2
+profile: bank
+model-paths: [models]
+models:
+  bank_analytics:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
+      +engine: MergeTree()
+      +order_by: (txn_date, currency)

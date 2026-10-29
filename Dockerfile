@@ -1,8 +1,7 @@
 FROM apache/airflow:2.10.5-python3.11
-RUN mkdir -p /opt/airflow/state /opt/airflow/data /opt/airflow/logs
-COPY requirements/pipeline.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
-COPY --chown=airflow:root pipeline /opt/airflow/pipeline
+RUN mkdir -p /opt/airflow/state /opt/airflow/logs
 COPY --chown=airflow:root orchestration /opt/airflow/dags
-ENV PYTHONPATH=/opt/airflow
-COPY --chown=airflow:root tests /opt/airflow/tests
+COPY --chown=airflow:root scripts/job_client.py /opt/airflow/scripts/job_client.py
+COPY --chown=airflow:root tests/airflow_smoke.py /opt/airflow/tests/airflow_smoke.py
+COPY --chown=airflow:root infra/airflow/start.sh /opt/airflow/scripts/start-airflow.sh
+COPY --chown=airflow:root scripts/realtime_client.py /opt/airflow/scripts/realtime_client.py

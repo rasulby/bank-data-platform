@@ -1,0 +1,38 @@
+version: 2
+sources:
+  - name: bank_raw
+    schema: "{{ env_var('CLICKHOUSE_DB') }}"
+    tables:
+      - name: raw_transactions
+      - name: customers
+      - name: cards
+models:
+  - name: stg_transactions
+    columns:
+      - name: txn_id
+        tests: [not_null, unique]
+      - name: status
+        tests:
+          - accepted_values:
+              values: [SUCCESS, DECLINED]
+  - name: fct_transactions
+    columns:
+      - name: txn_id
+        tests: [not_null, unique]
+      - name: customer_id
+        tests:
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_id
+  - name: dim_customers
+    columns:
+      - name: customer_id
+        tests: [not_null, unique]
+  - name: dim_cards
+    columns:
+      - name: card_id
+        tests: [not_null, unique]
+  - name: daily_summary
+    columns:
+      - name: txn_date
+        tests: [not_null]

@@ -1,6 +1,51 @@
+# Local settings and secrets
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+.aws/
+
+# Python and tools
 .venv/
+venv/
 __pycache__/
-*.pyc
-.DS_Store
+*.py[cod]
+.pytest_cache/
 .ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Generated data, runtime state and logs
+data/
+state/
+logs/
+checkpoints/
+reports/
+*.log
+*.pid
+*.db
+*.db-journal
+*.parquet
+*.avro
+*.orc
+*.jar
+
+# dbt outputs (keep project sources)
+transformation/target/
+transformation/logs/
+transformation/dbt_packages/
+transformation/.user.yml
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+.codex/
+.agents/
+node_modules/
+*.swp
+
+# Personal learning notes
+local-notes/
